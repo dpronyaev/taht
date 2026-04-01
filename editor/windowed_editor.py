@@ -10,23 +10,33 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 
-# Import editor configuration
+# Import game configuration for editor
 try:
-    from editor.config import TILE_OPTIONS, ENTITY_TYPES, DEFAULT_LEVEL_SIZES
+    from config import DEFAULT_LEVEL_SIZES, TILE_PROPERTIES, ENTITY_TYPES
 except ImportError:
-    # Fallback to default configuration if editor config not found
-    from config import DEFAULT_LEVEL_SIZES, ENTITY_MAP, TILE_OPTIONS
+    # Fallback to default configuration if config not found
+    DEFAULT_LEVEL_SIZES = {
+        "small": (20, 15),
+        "medium": (30, 22),
+        "large": (40, 30),
+    }
+    TILE_PROPERTIES = {
+        "#": {"can_pass_through": False},
+        ".": {"can_pass_through": True}
+    }
     ENTITY_TYPES = [
         {
             "char": "@",
             "name": "Player",
             "unique": True,
+            "can_pass_through": False,
             "description": "The main character"
         },
         {
             "char": "M",
             "name": "Monster",
             "unique": False,
+            "can_pass_through": False,
             "description": "Enemy creature"
         }
     ]
@@ -65,6 +75,7 @@ class LevelEditor:
         ttk.Button(button_frame, text="New Level", command=self.new_level).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Save", command=self.save_level).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Save As", command=self.save_level_as).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Run Level", command=self.run_level).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Exit", command=root.quit).pack(side=tk.LEFT, padx=5)
 
         # Canvas for level grid
@@ -237,11 +248,22 @@ class LevelEditor:
             # Clean up entity data to ensure it's properly formatted
             cleaned_entities = []
             for entity in self.entities:
-                # Ensure entity has required fields
+                # Ensure entity has required fields and infer type
+                # Find the entity type based on character
+                entity_type = "entity"  # default type
+                for entity_type_def in ENTITY_TYPES:
+                    if entity_type_def["char"] == entity["char"]:
+                        if entity_type_def["unique"]:
+                            entity_type = "player"
+                        else:
+                            entity_type = "monster"
+                        break
+
                 cleaned_entity = {
                     "x": entity["x"],
                     "y": entity["y"],
-                    "char": entity["char"]
+                    "char": entity["char"],
+                    "type": entity_type
                 }
                 cleaned_entities.append(cleaned_entity)
 
@@ -272,10 +294,52 @@ class LevelEditor:
             filename = f"custom_{name}.json"
             path = LEVELS_DIR / filename
 
+            # Process entities to add type information
+            processed_entities = []
+            for entity in self.entities:
+                # Find the entity type based on character
+                entity_type = "entity"  # default type
+                for entity_type_def in ENTITY_TYPES:
+                    if entity_type_def["char"] == entity["char"]:
+                        if entity_type_def["unique"]:
+                            entity_type = "player"
+                        else:
+                            entity_type = "monster"
+                        break
+
+                processed_entity = {
+                    "x": entity["x"],
+                    "y": entity["y"],
+                    "char": entity["char"],
+                    "type": entity_type
+                }
+                processed_entities.append(processed_entity)
+
+            # Process entities to add type information
+            processed_entities = []
+            for entity in self.entities:
+                # Find the entity type based on character
+                entity_type = "entity"  # default type
+                for entity_type_def in ENTITY_TYPES:
+                    if entity_type_def["char"] == entity["char"]:
+                        if entity_type_def["unique"]:
+                            entity_type = "player"
+                        else:
+                            entity_type = "monster"
+                        break
+
+                processed_entity = {
+                    "x": entity["x"],
+                    "y": entity["y"],
+                    "char": entity["char"],
+                    "type": entity_type
+                }
+                processed_entities.append(processed_entity)
+
             data = {
                 "name": name,
                 "tiles": ["".join(row) for row in self.tiles],
-                "entities": self.entities,
+                "entities": processed_entities,
             }
 
             with open(path, 'w') as f:
@@ -391,6 +455,61 @@ class LevelEditor:
                     self.status_var.set(f"Placed entity: {entity_name} ({selected_char}) at ({x}, {y})")
 
             self.draw_grid()
+
+    def run_level(self):
+        """Run the current level in the game."""
+        try:
+            # Check if we need to save the current level
+            selected_name = self.level_var.get()
+
+            # If it's a custom level and has unsaved changes, ask to save
+            if selected_name and selected_name.startswith("custom_"):
+                # Check if current level has been modified since last save
+                # For simplicity, we'll just ask to save
+                if messagebox.askyesno("Save Changes", "Do you want to save changes to the current level before running it?"):
+                    self.save_level()
+            else:
+                # If it's a default level, save as custom level
+                if messagebox.askyesno("Save Level", "Do you want to save this level as a custom level before running it?"):
+                    self.save_level_as()
+                else:
+                    # If user doesn't want to save, we'll still save to temp file for running
+                    pass
+
+            # Create a temporary level file in the levels directory
+            import tempfile
+            import os
+
+            # Create a temporary file name
+            temp_file = os.path.join("levels", "temp_run_level.json")
+
+            # Save current level to temp file
+            data = {
+                "name": "Temp Run Level",
+                "tiles": ["".join(row) for row in self.tiles],
+                "entities": self.entities,
+            }
+
+            with open(temp_file, 'w') as f:
+                import json
+                json.dump(data, f, indent=2)
+
+            self.status_var.set(f"Running level: temp_run_level.json")
+
+            # Run the game with the temp level
+            import subprocess
+            import sys
+
+            # Launch game in a separate process with level name as argument
+            game_process = subprocess.Popen([
+                sys.executable, "game.py", "temp_run_level.json"
+            ], cwd=os.getcwd())
+
+            self.status_var.set("Game running... (close window to return)")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to run level: {str(e)}")
+            self.status_var.set("Error running level")
 
 def main():
     root = tk.Tk()

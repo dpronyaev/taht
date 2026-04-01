@@ -16,6 +16,20 @@ from ui.inventory import InventoryUI
 from ui.dialogue import DialogueUI
 from ui.quest import QuestJournal
 
+# Import configuration for pass-through properties
+try:
+    from config import TILE_PROPERTIES, ENTITY_TYPES
+except ImportError:
+    # Fallback for game engine without editor
+    TILE_PROPERTIES = {
+        "#": {"can_pass_through": False},
+        ".": {"can_pass_through": True}
+    }
+    ENTITY_TYPES = [
+        {"char": "@", "can_pass_through": False},
+        {"char": "M", "can_pass_through": False}
+    ]
+
 # Configuration
 LEVELS_DIR = Path("levels")
 DEFAULT_LEVEL = "sample.json"
@@ -28,12 +42,23 @@ def load_level(name: str):
     tiles = data["tiles"]
     entities = []
     for ent_data in data.get("entities", []):
-        if ent_data["type"] == "player":
-            ent = Player(ent_data["x"], ent_data["y"], ent_data.get("char", "@"))
-        elif ent_data["type"] == "monster":
-            ent = Monster(ent_data["x"], ent_data["y"], ent_data.get("char", "M"))
+        # Check if the entity has a type field (new format) or infer from char (old format)
+        if "type" in ent_data:
+            if ent_data["type"] == "player":
+                ent = Player(ent_data["x"], ent_data["y"], ent_data.get("char", "@"))
+            elif ent_data["type"] == "monster":
+                ent = Monster(ent_data["x"], ent_data["y"], ent_data.get("char", "M"))
+            else:
+                ent = Entity(ent_data["x"], ent_data["y"], ent_data.get("char", "?"))
         else:
-            ent = Entity(ent_data["x"], ent_data["y"], ent_data.get("char", "?"))
+            # Infer type from character (old format compatibility)
+            char = ent_data.get("char", "?")
+            if char == "@":
+                ent = Player(ent_data["x"], ent_data["y"], char)
+            elif char == "M":
+                ent = Monster(ent_data["x"], ent_data["y"], char)
+            else:
+                ent = Entity(ent_data["x"], ent_data["y"], char)
         entities.append(ent)
     return tiles, entities
 
@@ -43,7 +68,32 @@ def main(stdscr):
     stdscr.nodelay(True)
     stdscr.keypad(True)
 
-    tiles, entities = load_level(DEFAULT_LEVEL)
+    # Get level name from command line arguments, fallback to default
+    import sys
+    level_name = DEFAULT_LEVEL
+    if len(sys.argv) > 1:
+        level_name = sys.argv[1]
+
+    tiles, entities = load_level(level_name)
+    log = []
+    renderer = Renderer(tiles, entities)
+    inventory_ui = InventoryUI(stdscr)
+    dialogue_ui = DialogueUI(stdscr)
+    quest_journal = QuestJournal(stdscr)
+
+
+def main(stdscr):
+    curses.curs_set(0)
+    stdscr.nodelay(True)
+    stdscr.keypad(True)
+
+    # Get level name from command line arguments, fallback to default
+    import sys
+    level_name = DEFAULT_LEVEL
+    if len(sys.argv) > 1:
+        level_name = sys.argv[1]
+
+    tiles, entities = load_level(level_name)
     log = []
     renderer = Renderer(tiles, entities)
     inventory_ui = InventoryUI(stdscr)
@@ -108,7 +158,29 @@ def main(stdscr):
         new_y = player.y + dy
         # simple bounds check
         if 0 <= new_x < len(tiles[0]) and 0 <= new_y < len(tiles):
-            if tiles[new_y][new_x] != "#" and not any(e.x == new_x and e.y == new_y for e in entities):
+            # Check if the target tile allows passage
+            target_tile = tiles[new_y][new_x]
+            tile_passable = True
+            if target_tile in TILE_PROPERTIES:
+                tile_passable = TILE_PROPERTIES[target_tile]["can_pass_through"]
+
+            # Check if there's an entity at the target position
+            entity_at_position = None
+            for e in entities:
+                if e.x == new_x and e.y == new_y:
+                    entity_at_position = e
+                    break
+
+            # Check if entity allows passage
+            entity_passable = True
+            if entity_at_position and hasattr(entity_at_position, 'char'):
+                for entity_type in ENTITY_TYPES:
+                    if entity_type["char"] == entity_at_position.char:
+                        entity_passable = entity_type.get("can_pass_through", False)
+                        break
+
+            # Allow movement only if both tile and entity are passable
+            if tile_passable and entity_passable:
                 player.move(dx, dy)
 
 
